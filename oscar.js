@@ -1,3 +1,4 @@
+//ds
 var net = require('net'), util = require('util'),
     EventEmitter = require('events').EventEmitter, crypto = require('crypto');
 var fnEmpty = function() {};
@@ -74,16 +75,70 @@ OscarConnection.prototype.setIdle = function(amount) { // amount is in seconds i
   else if (typeof amount !== 'number' || amount <= 0 || amount === true)
     throw new Error('Amount must be boolean false or a positive number > 0');
 
-  this._send(this._createFLAP(self._state.connections.main, FLAP_CHANNELS.SNAC,
+  this._send(this._createFLAP(this._state.connections.main, FLAP_CHANNELS.SNAC,
     this._createSNAC(SNAC_SERVICES.GENERIC, 0x11, NO_FLAGS,
       [(amount >> 24 & 0xFF), (amount >> 16 & 0xFF), (amount >> 8 & 0xFF), (amount & 0xFF)]
     )
   ));
 };
 
+OscarConnection.prototype.authReply = function( who, accepted, text ) {
+
+  if (typeof who === 'object')
+    who = who.name;
+
+  who = str2bytes(''+who);
+  text = str2bytes(''+text);
+  
+  if (who.length > MAX_SN_LEN) {
+	  
+    throw new Error('Screen names cannot be longer than ' + MAX_SN_LEN + ' characters');
+
+  }
+
+  if ( accepted ) accepted = [0x01]; else accepted = [0x00];
+
+  this._send( this._createFLAP(this._state.connections.main, FLAP_CHANNELS.SNAC,
+    this._createSNAC(SNAC_SERVICES.SSI, 0x1A, NO_FLAGS,
+      [who.length]
+      .concat(who)
+      .concat(accepted)
+      .concat( [ (text.length >> 8 & 0xFF), (text.length & 0xFF) ] )
+      .concat(text)
+    )
+  ) );
+};
+
+OscarConnection.prototype.authRequest = function( who, text, cb ) {
+
+  if (typeof who === 'object')
+    who = who.name;
+
+  who = str2bytes(''+who);
+  text = str2bytes(''+text);
+  
+  if (who.length > MAX_SN_LEN) {
+	  
+    throw new Error('Screen names cannot be longer than ' + MAX_SN_LEN + ' characters');
+
+  }
+
+  var unk = [0x00, 0x00];
+
+  this._send( this._createFLAP(this._state.connections.main, FLAP_CHANNELS.SNAC,
+    this._createSNAC(SNAC_SERVICES.SSI, 0x18, NO_FLAGS,
+      [who.length]
+      .concat(who)
+      .concat( [ (text.length >> 8 & 0xFF), (text.length & 0xFF) ] )
+      .concat(text)
+      .concat(unk)
+    )
+  ), cb );
+};
+
 OscarConnection.prototype.sendIM = function(who, message, flags, cb) {
   var msgData, cookie, msgLen, self = this, features = (self._state.isAOL ? [0x01, 0x01, 0x01, 0x02] : [0x01]),
-      featLen = features.length, charset = ICBM_MSG_CHARSETS.ASCII, isSMS;
+      featLen = features.length, charset = ICBM_MSG_CHARSETS.UNICODE, isSMS;
   cb = arguments[arguments.length-1];
   if (typeof flags !== 'number')
     flags = 0x00000000;
@@ -699,6 +754,7 @@ function connect_handler(oscar) {
   conn.availServices = {};
   conn.isConnected = true;
   clearTimeout(conn.tmrConn);
+  conn.restartKeepAlive();
   if (conn.isTransferring) {
     if (conn.id === 'login') {
       self._state.connections.main = self._state.connections.login;
@@ -754,7 +810,7 @@ function data_handler(oscar, data, cb) {
         conn.curData = undefined;
       break;
       case FLAP_CHANNELS.CONN_CLOSE: // close connection negotiation
-        debug('(' + conn.remoteAddress + ') RECEIVED FLAP type: Close connection negotiation');
+        debug('(' + conn.remoteAddress + ') RECEIVED FLAP type: Close connection negotiation '+ conn.serverType);
         if (conn.serverType === 'BOS') {
           var tlvs = extractTLVs(data, 6);
           if (tlvs[TLV_TYPES.ERROR]) {
@@ -768,6 +824,7 @@ function data_handler(oscar, data, cb) {
             return;
           } else if (tlvs[TLV_TYPES.BOS_SERVER])
             self._login(undefined, conn, cb, 1, tlvs[TLV_TYPES.BOS_SERVER].toString(), tlvs[TLV_TYPES.AUTH_COOKIE]);
+          else self.end();
         }
         conn.curData = undefined;
       break;
@@ -854,6 +911,12 @@ OscarConnection.prototype._addConnection = function(id, services, host, port, cb
   self._state.connections[id].tmrConn = setTimeout(self._state.connections[id].fnTmrConn, self._options.connection.connTimeout, cb);
   self._state.connections[id].setTimeout(0);
   self._state.connections[id].setKeepAlive(true);
+  self._state.connections[id].restartKeepAlive = function() {
+    var conn = this;
+    if (conn.keepAliveTimer)
+      clearTimeout(conn.keepAliveTimer);
+    conn.keepAliveTimer = setInterval(function() { self._sendKeepAlive(conn); }, KEEPALIVE_INTERVAL);
+  };
   self._state.connections[id].on('connect', function() { connect_handler.call(this, self); });
   self._state.connections[id].on('data', function(data) { data_handler.call(this, self, data, cb); });
   self._state.connections[id].on('end', function() { end_handler.call(this, self); });
@@ -985,8 +1048,8 @@ OscarConnection.prototype._SSIModify = function(items, action, cb) {
       } else if (items[i].type === 0x01) {
         if (action === 2) {
           var ids = [],
-              children = (Object.keys(items[i].group > 0 ?
-                          this.contacts.list[items[i].group].contacts : this.contacts._usedIDs),len2 = children.length);
+              children = Object.keys(items[i].group > 0 ?
+                          this.contacts.list[items[i].group].contacts : this.contacts._usedIDs),len2 = children.length;
           for (var j=0; j<len2; j++) {
             if (items[i].group === 0 && children[j] === 0)
               continue;
@@ -1113,6 +1176,8 @@ OscarConnection.prototype._send = function(conn, payload, cb) {
   payload = new Buffer(payload);
   debug('(' + conn.remoteAddress + ') SENDING: \n' + util.inspect(payload) + '\n');
   conn.write(payload);
+  
+  conn.restartKeepAlive();
 };
 
 OscarConnection.prototype._dispatch = function(reqID) {
@@ -1224,7 +1289,7 @@ OscarConnection.prototype._cancelRendezvous = function(inout, cookie, cb) {
     if (inout === 'out') {
       content = cookie.concat[0x00, 0x02, who.length].concat(who).concat(this._createTLV(0x03))
                       .concat(this._createTLV(0x05, [0x00, 0x01].concat(cookie).concat(type).concat(this._createTLV(0x0B))));
-      this._send(this._createFLAP(self._state.connections.main, FLAP_CHANNELS.SNAC,
+      this._send(this._createFLAP(this._state.connections.main, FLAP_CHANNELS.SNAC,
         this._createSNAC(SNAC_SERVICES.ICBM, 0x06, NO_FLAGS,
           content
         )
@@ -2194,6 +2259,9 @@ OscarConnection.prototype._parseSNAC = function(conn, snac, cb) {
                 }
               }
             }
+            
+            if ( typeof( items[0x01] ) == "object" ) {
+				
             for (var i=0,groups=Object.keys(items[0x01]),len=groups.length,group; i<len; i++) {
               group = groups[i];
               self.contacts.list[group] = {
@@ -2242,6 +2310,7 @@ OscarConnection.prototype._parseSNAC = function(conn, snac, cb) {
                 }
               }
             }
+            }
             self.contacts.lastModified = new Date(((snac[idx++] << 24) + (snac[idx++] << 16) + (snac[idx++] << 8) + snac[idx++]) * 1000);
             self._dispatch(reqID);
           }
@@ -2257,6 +2326,7 @@ OscarConnection.prototype._parseSNAC = function(conn, snac, cb) {
             self._dispatch(reqID, err);
           }
         break;
+        case 0x1c:
         case 0x13: // 'you were added' message
           debugtext += 'You were added to the buddy list of ';
           var who = snac.toString('utf8', idx+1, idx+1+snac[idx]);
@@ -2264,11 +2334,33 @@ OscarConnection.prototype._parseSNAC = function(conn, snac, cb) {
           self.emit('added', who);
         break;
         case 0x19: // authorization request
-          debugtext += 'Authorization request';
+          debugtext += 'Authorization request from ';
           // use SSI (0x13) 0x1A to send reply
+          
+          var who = snac.toString('utf8', idx+1, idx+1+snac[idx]);
+          debugtext += who + ' (';
+          idx += 1+snac[idx];
+
+          var txt_l = (snac[idx++] << 8) + snac[idx++];;
+          var txt = snac.toString('utf8', idx, idx + txt_l);
+          debugtext += txt + ')';
+          
+          self.emit('auth_request', who, txt);
         break;
         case 0x1B: // authorization reply
           debugtext += 'Authorization reply';
+          
+          var who = snac.toString('utf8', idx+1, idx+1+snac[idx]);
+          debugtext += who + ' (';
+          idx += 1+snac[idx];
+          
+          var accepted = ( snac[idx++] == 1 );
+
+          var txt_l = (snac[idx++] << 8) + snac[idx++];;
+          var txt = snac.toString('utf8', idx, idx + txt_l);
+          debugtext += txt + ')';
+          
+          self._dispatch(reqID, who, accepted, txt);
         break;
         default:
           debugtext += 'Unknown (0x' + subtypeID.toString(16) + ')';
@@ -2994,6 +3086,16 @@ OscarConnection.prototype._createTLV = function(type, value) {
   return [(type >> 8 & 0xFF), (type & 0xFF),  (value.length >> 8 & 0xFF), (value.length & 0xFF)].concat(value);
 };
 
+OscarConnection.prototype._sendKeepAlive = function(conn) {
+  if (!conn)
+    conn = this._state.connections.main;
+  if (conn && conn.isConnected) {
+    this._send(conn, this._createFLAP(conn, FLAP_CHANNELS.KEEPALIVE));
+  } else {
+    clearTimeout(conn.keepAliveTimer);
+  }
+};
+
 /**
  * Adopted from jquery's extend method. Under the terms of MIT License.
  *
@@ -3657,6 +3759,7 @@ var NO_FLAGS = 0x0000;
 var MAX_SN_LEN = 97;
 var MAX_MSG_LEN = 2544;
 var MAX_ICON_LEN = 7168;
+var KEEPALIVE_INTERVAL = 30*1000;
 var SERVER_AOL = 'login.oscar.aol.com';
 var SERVER_ICQ = 'login.icq.com';
 // End Constants -----------------------------------------------------------------------------
