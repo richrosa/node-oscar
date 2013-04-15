@@ -29,5 +29,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "license": "BSD"
+  "license": "BSD",
+  "gitHead": "b56a3f764e9cb7a4200f9c69fe524bbd8d47445a",
+  "main": "oscar.js"
 }
