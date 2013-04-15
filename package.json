@@ -1,35 +1,10 @@
-{
-  "name": "oscar",
+{ "name": "oscar",
   "version": "0.1.1",
   "author": "Brian White <mscdex@mscdex.net>",
   "description": "An OSCAR protocol module for node.js",
-  "engines": {
-    "node": ">=0.2.0"
-  },
-  "keywords": [
-    "aim",
-    "icq",
-    "oscar",
-    "aol",
-    "im",
-    "chat",
-    "client"
-  ],
-  "licenses": [
-    {
-      "type": "MIT",
-      "url": "http://github.com/mscdex/node-oscar/raw/master/LICENSE"
-    }
-  ],
-  "repository": {
-    "type": "git",
-    "url": "http://github.com/richrosa/node-oscar.git#master"
-  },
-  "readmeFilename": "README",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "license": "BSD",
-  "gitHead": "b56a3f764e9cb7a4200f9c69fe524bbd8d47445a",
-  "main": "oscar.js"
+  "main": "./oscar",
+  "engines": { "node": ">=0.2.0" },
+  "keywords": [ "aim", "icq", "oscar", "aol", "im", "chat", "client" ],
+  "licenses": [ { "type": "MIT", "url": "http://github.com/mscdex/node-oscar/raw/master/LICENSE" } ],
+  "repository": { "type": "git", "url": "http://github.com/richrosa/node-oscar.git" }
 }
