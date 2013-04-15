@@ -24,10 +24,9 @@
   ],
   "repository": {
     "type": "git",
-    "url": "http://github.com/richrosa/node-oscar.git"
+    "url": "http://github.com/richrosa/node-oscar.git#master"
   },
   "readmeFilename": "README",
-  "gitHead": "acf9bf9bbc16fe07a0e6e5ec85b2366ee5169baa",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
